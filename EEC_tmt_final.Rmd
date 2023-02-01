@@ -1,0 +1,719 @@
+---
+title: "EEC_tmt_final.Rmd"
+author: "Judith Kaye"
+date: "12/21/2021"
+output: html_document
+---
+
+```{r}
+setwd("/n/scratch3/users/j/jk386/marito")
+.libPaths("~/R-4.1.1/library")
+.libPaths()
+#install.packages("", lib = "~/R-4.1.1/library")
+#BiocManager::install("glmGamPoi")
+#local({options(repos = BiocManager::repositories())})
+#devtools::install_github('bimberlab/cellhashR')
+#install.packages('glmGamPoi')
+
+
+#library(org.Mm.eg.db, lib = "~/R-4.1.1/library")
+#library(clusterProfiler, lib = "~/R-4.1.1/library")
+library(biomaRt, lib = "~/R-4.1.1/library")
+#library(SeuratData, lib = "~/R-4.1.1/library")
+library(Seurat, lib = "~/R-4.1.1/library")
+library(dplyr, lib = "~/R-4.1.1/library")
+library(Matrix, lib = "~/R-4.1.1/library")
+library(stringr, lib = "~/R-4.1.1/library")
+library(sctransform, lib = "~/R-4.1.1/library")
+library(ggplot2, lib = "~/R-4.1.1/library")
+library(RColorBrewer, lib = "~/R-4.1.1/library")
+library(cowplot, lib = "~/R-4.1.1/library")
+library(reshape2, lib = "~/R-4.1.1/library")
+library(stringi, lib = "~/R-4.1.1/library")
+library(gplots, lib = "~/R-4.1.1/library")
+library(hdf5r, lib = "~/R-4.1.1/library")
+library(DropletUtils, lib = "~/R-4.1.1/library")
+
+#load("/n/scratch3/users/j/jk386/marito/EEC_Tmt.Rmd.RData")
+save.image("/n/scratch3/users/j/jk386/marito/EEC_Tmt.Rmd.RData")
+
+```
+# Load Matrix and Make Seurat Object
+```{r}
+# create seurat object for gex from cell ranger
+Nd1T.mat <- Read10X_h5(filename = "/n/scratch3/users/j/jk386/marito/FC_05078_Nd1_counts/outs/filtered_feature_bc_matrix.h5")
+Ngn3T.mat <- Read10X_h5(filename = "/n/scratch3/users/j/jk386/marito/FC_04573_Ngn3_counts/outs/filtered_feature_bc_matrix.h5")
+
+Ngn3T.obj <- CreateSeuratObject(Ngn3T.mat, project = "Ngn3")
+Nd1T.obj <- CreateSeuratObject(Nd1T.mat, project = "Nd1")
+
+```
+
+# Add Metadata
+
+```{r metadata_Nd1T}
+
+#Complexity - #genes/#reads
+Nd1T.obj <- AddMetaData(Nd1T.obj, (Nd1T.obj@meta.data$nCount_RNA/Nd1T.obj@meta.data$nFeature_RNA)^(-1), col.name = "complexity")
+
+#Mitochondria
+mito.genes <- grep("^mt", Nd1T.mat@Dimnames[[1]], value = T)
+percent.mito <- Matrix::colSums(Nd1T.obj@assays$RNA@counts[c(mito.genes), ])/Matrix::colSums(Nd1T.obj@assays$RNA@counts)
+Nd1T.obj <- AddMetaData(object = Nd1T.obj, metadata = percent.mito, col.name = "percent.mito")
+
+#EECs
+eec.genes <- c("Gcg", "Gip", "Cck", "Nts", "Sst", "Tph1", "Ghrl", "Glp1", "Sct", "Pyy", "Glp1", "Sst28", "Sst14", "Tac1", "Chga", "Neurod1", "Neurog3")
+eec.genes <- eec.genes[eec.genes %in% Nd1T.mat@Dimnames[[1]]]
+percent.eec <- Matrix::colSums(Nd1T.obj@assays$RNA@counts[c(eec.genes), ])/Matrix::colSums(Nd1T.obj@assays$RNA@counts)
+Nd1T.obj <- AddMetaData(object = Nd1T.obj, metadata = percent.eec, col.name = "percent.eec")
+
+#Goblet
+gob.genes <- c("Muc2", "Klf4", "Spdef", "Atoh1", "Rbpj", "Ctnnb1", "Cdh1", "Apc", "Cdx2")
+
+#Paneth  
+pan.genes <- c("Sox9", "Ascl2", "Lgr5", "Hes1", "Ppard", "Msi1", "Lgr4", "Fzd5", "Fgfr3", "Ephb3", "Ctnnb1", "Cdh1", "Apc", "Cdx2")
+
+#Enterocytes
+ent.genes <- c("Elf3", "Gadd45gip1", "Hnf1a", "Hnf1b", "Pdx1", "Rb1", "Tgfbr2", "Vav", "Ptk6")
+
+#Ribo
+RPS.genes <- grep(pattern = "^Rps", rownames(Nd1T.obj), value = TRUE)
+percent.rps <- Matrix::colSums(Nd1T.obj@assays$RNA@counts[RPS.genes, ])/Matrix::colSums(Nd1T.obj@assays$RNA@counts)
+Nd1T.obj <- AddMetaData(object = Nd1T.obj, metadata = percent.rps, col.name = "percent.rps")
+
+#MtRb
+Nd1T.obj <- AddMetaData(object = Nd1T.obj, metadata = (Nd1T.obj@meta.data$percent.mito+1)/(Nd1T.obj@meta.data$percent.rps+1), col.name = "MtRb")
+
+#  
+VlnPlot(Nd1T.obj, features = c("nCount_RNA", "nFeature_RNA", "complexity", "percent.mito"), ncol = 4)
+FeatureScatter(Nd1T.obj, feature1 = "nFeature_RNA", feature2 = "MtRb")
+VlnPlot(Nd1T.obj, features = c("percent.mito", "percent.rps", "MtRb", "nCount_RNA"), ncol = 4)
+
+```
+```{r metadata_Ngn3T}
+
+#Complexity - #genes/#reads
+Ngn3T.obj <- AddMetaData(Ngn3T.obj, (Ngn3T.obj@meta.data$nCount_RNA/Ngn3T.obj@meta.data$nFeature_RNA)^(-1), col.name = "complexity")
+
+#EECs
+eec.genes <- c("Gcg", "Gip", "Cck", "Nts", "Sst", "Tph1", "Ghrl", "Glp1", "Sct", "Pyy", "Glp1", "Sst28", "Sst14", "Tac1", "Chga", "Neurod1", "Neurog3")
+eec.genes <- eec.genes[eec.genes %in% Ngn3T.mat@Dimnames[[1]]]
+percent.eec <- Matrix::colSums(Ngn3T.obj@assays$RNA@counts[c(eec.genes), ])/Matrix::colSums(Ngn3T.obj@assays$RNA@counts)
+Ngn3T.obj <- AddMetaData(object = Ngn3T.obj, metadata = percent.eec, col.name = "percent.eec")
+
+#Ribo
+RPS.genes <- grep(pattern = "^Rps", rownames(Ngn3T.obj), value = TRUE)
+percent.rps <- Matrix::colSums(Ngn3T.obj@assays$RNA@counts[RPS.genes, ])/Matrix::colSums(Ngn3T.obj@assays$RNA@counts)
+Ngn3T.obj <- AddMetaData(object = Ngn3T.obj, metadata = percent.rps, col.name = "percent.rps")
+
+#Mitochondria
+mito.genes <- grep("^mt", Ngn3T.mat@Dimnames[[1]], value = T)
+percent.mito <- Matrix::colSums(Ngn3T.obj@assays$RNA@counts[c(mito.genes), ])/Matrix::colSums(Ngn3T.obj@assays$RNA@counts)
+Ngn3T.obj <- AddMetaData(object = Ngn3T.obj, metadata = percent.mito, col.name = "percent.mito")
+
+#MtRb
+Ngn3T.obj <- AddMetaData(object = Ngn3T.obj, metadata = (Ngn3T.obj@meta.data$percent.mito+1)/(Ngn3T.obj@meta.data$percent.rps+1), col.name = "MtRb")
+
+#  
+VlnPlot(Ngn3T.obj, features = c("nCount_RNA", "nFeature_RNA", "complexity", "percent.mito"), ncol = 4)
+FeatureScatter(Ngn3T.obj, feature1 = "percent.mito", feature2 = "MtRb")
+VlnPlot(Ngn3T.obj, features = c("percent.mito", "percent.rps", "MtRb", "nCount_RNA"), ncol = 4)
+```
+
+# AllCells
+
+## Round 1
+
+```{r, warning=F}
+# filter high UMI and high mito and transform
+Nd1T.round1 <- subset(Nd1T.obj, subset = `nCount_RNA` < 125000 & percent.mito < 0.25) 
+Nd1T.round1 <- SCTransform(Nd1T.round1, vars.to.regress = "percent.mito", verbose = F)
+Ngn3T.round1 <- subset(Ngn3T.obj, subset = `nCount_RNA` < 125000 & percent.mito < 0.25)
+Ngn3T.round1 <- SCTransform(Ngn3T.round1, vars.to.regress = "percent.mito", verbose = F)
+
+# Integrate
+both.list <- list(Ngn3T.round1, Nd1T.round1)
+both.int.features <- SelectIntegrationFeatures(both.list, nfeatures = 3000)
+both.list <- PrepSCTIntegration(both.list, anchor.features = both.int.features)
+both.anchors <- FindIntegrationAnchors(both.list, normalization.method = "SCT", 
+    anchor.features = both.int.features)
+
+AllCells.int <- IntegrateData(anchorset = both.anchors, normalization.method = "SCT")
+
+# Find optimal resolution
+DefaultAssay(AllCells.int) <- "integrated"
+
+AllCells.int <- RunPCA(AllCells.int, verbose = FALSE)
+AllCells.int <- RunUMAP(AllCells.int, dims = 1:30)
+AllCells.int <- FindNeighbors(AllCells.int, dims = 1:30, verbose = FALSE)
+
+resI = c(1, 0.8, .6, 0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1) 
+
+for (i in 1:12){
+  AllCells.int <- FindClusters(AllCells.int, verbose = FALSE, resolution = resI[i])
+  print(
+  DimPlot(AllCells.int, label = TRUE) + labs(title = paste0("AllCells.int Cells res = ", resI[i]), subtitle = length(colnames(AllCells.int)))
+  )
+}
+```
+
+```{r}
+DefaultAssay(AllCells.int) <- "integrated"
+AllCells.int <- FindClusters(AllCells.int, verbose = FALSE, resolution = .45)
+DefaultAssay(AllCells.int) <- "RNA"
+```
+```{r}
+DefaultAssay(AllCells.int) <- "RNA"
+AllCells.int <- NormalizeData(AllCells.int) 
+AllCells.int <- ScaleData(AllCells.int) #https://github.com/satijalab/seurat/issues/2023
+```
+
+```{r}
+DimPlot(AllCells.int, label = TRUE) + labs(title = "AllCells.int Cells", subtitle = length(colnames(AllCells.int)))
+DimPlot(AllCells.int, label = TRUE, group.by = "orig.ident") + labs(title = "AllCells.int Cells", subtitle = length(colnames(AllCells.int)))
+
+DimPlot(AllCells.int, label = TRUE, cells.highlight = WhichCells(AllCells.int, expression = `nCount_RNA` < 10000)) + labs(title = "AllCells.int Cells", subtitle = "less than 10k UMIs")
+DimPlot(AllCells.int, label = TRUE, cells.highlight = WhichCells(AllCells.int, expression = `TMT` < 1)) + labs(title = "AllCells.int Cells", subtitle = "no TMT UMI")
+
+VlnPlot(AllCells.int, features = c("nFeature_RNA", "nCount_RNA", "Neurod1", "percent.mito"), ncol = 2)
+
+FeaturePlot(AllCells.int, features = c("nFeature_RNA", "nCount_RNA", "Neurod1", "percent.mito"), label = T)
+FeaturePlot(AllCells.int, features = c("Tac1", "Sct", "Chga", "Neurod1"), pt.size = 1, label = T)
+
+#Fig3
+Fig3 <- c("Lgr5", "Hes1", "Neurod1", "Chga", "Sct", "Tph1", "Tac1", "Cartpt", "Gad2", "Cck", "Gcg", "Nts", "Pyy", "Ghrl", "Sst", "Gip")
+
+FeaturePlot(AllCells.int, features = c("Muc2", "Dclk1", "Defa17", "Gda"))
+FeaturePlot(AllCells.int, features = Fig3[1:4])
+FeaturePlot(AllCells.int, features = Fig3[5:8])
+FeaturePlot(AllCells.int, features = Fig3[9:12])
+FeaturePlot(AllCells.int, features = Fig3[13:16])
+
+```
+Clusters to remove: 5,7,9,13,15,18
+```{r}
+
+lines<- c("P2ry1", "Npy2r", "Piezo2", "Crhr2", "Gpr65", "Glp1r", "Tac1", "Th", "Vip", "Calb1", "Oxtr", "Nts", "Sst", "Olfr78", "Neurod1", "Mc4r", "Cartpt", "Gabra1", "Vil1")
+
+FeaturePlot(AllCells.int, features = lines[1:4])
+FeaturePlot(AllCells.int, features = lines[5:8])
+FeaturePlot(AllCells.int, features = lines[9:12])
+FeaturePlot(AllCells.int, features = lines[13:16])
+FeaturePlot(AllCells.int, features = lines[17:20])
+VlnPlot(AllCells.int, features = "complexity")
+```
+
+```{r, fig.width=10, fig.height= 4.5}
+FeaturePlot(AllCells.int, features = gob.genes[1:6], ncol = 3, label =T)
+FeaturePlot(AllCells.int, features = c(pan.genes[1:5], "Defa17"), ncol = 3, label =T)
+FeaturePlot(AllCells.int, features = c(ent.genes[c(1,2,7)], "Hmgb2", "Fabp2","Ace2"), ncol = 3, label =T)
+
+FeaturePlot(AllCells.int, features = c("Lct", "Ace2", "Gda", "mt-Nd2", "Atf3", "Dclk1"), ncol = 3, label =T)
+
+FeaturePlot(AllCells.int, features = eec.genes[1:6], ncol = 3, label =T)
+```
+
+## Round 2
+```{r, warning=F}
+ngn3.cells <- colnames(Ngn3T.round1)[colnames(Ngn3T.round1) %in% substr(WhichCells(AllCells.int, idents = c(5,7,9,13,15,18), invert = T),1,18)]
+nd1.cells <- colnames(Nd1T.round1)[colnames(Nd1T.round1) %in% substr(WhichCells(AllCells.int, idents = c(5,7,9,13,15,18), invert = T),1,18)]
+
+Ngn3T.round2 <- subset(Ngn3T.obj, cells = ngn3.cells) 
+Ngn3T.round2 <- SCTransform(Ngn3T.round2, vars.to.regress = "percent.mito")
+
+Nd1T.round2 <- subset(Nd1T.obj, cells = nd1.cells) 
+Nd1T.round2 <- SCTransform(Nd1T.round2, vars.to.regress = "percent.mito")
+
+both.list <- list(Ngn3T.round2, Nd1T.round2)
+both.int.features <- SelectIntegrationFeatures(both.list, nfeatures = 3000)
+both.list <- PrepSCTIntegration(both.list, anchor.features = both.int.features)
+both.anchors <- FindIntegrationAnchors(both.list, normalization.method = "SCT", 
+    anchor.features = both.int.features)
+
+AllCells2.int <- IntegrateData(anchorset = both.anchors, normalization.method = "SCT")
+```
+```{r, warning=F}
+DefaultAssay(AllCells2.int) <- "integrated"
+
+AllCells2.int <- RunPCA(AllCells2.int, verbose = FALSE) %>%
+  RunUMAP(dims = 1:30) %>%
+  FindNeighbors(dims = 1:30, verbose = FALSE)
+
+resI = c(1, 0.8, .6, 0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1) 
+for (i in 1:12){
+  AllCells2.int <- FindClusters(AllCells2.int, verbose = FALSE, resolution = resI[i])
+  print(
+  DimPlot(AllCells2.int, label = TRUE) + labs(title = paste0("AllCells2.int Cells res = ", resI[i]), subtitle = length(colnames(AllCells2.int)))
+  )
+}
+```
+
+```{r, warning=F}
+DefaultAssay(AllCells2.int) <- "integrated"
+AllCells2.int <- FindClusters(AllCells2.int, verbose = FALSE, resolution = .35)
+DimPlot(AllCells2.int, label = TRUE) + labs(title = paste0("AllCells2.int Cells res = .35"), subtitle = length(colnames(AllCells2.int)))
+DefaultAssay(AllCells2.int) <- "RNA"
+```
+```{r}
+DefaultAssay(AllCells2.int) <- "RNA"
+AllCells2.int <- NormalizeData(AllCells2.int) 
+AllCells2.int <- ScaleData(AllCells2.int) #https://github.com/satijalab/seurat/issues/2023
+```
+```{r}
+DimPlot(AllCells2.int, label = TRUE) + labs(title = "AllCells2.int Cells", subtitle = length(colnames(AllCells2.int)))
+DimPlot(AllCells2.int, label = TRUE, group.by = "orig.ident") + labs(title = "AllCells2.int Cells", subtitle = length(colnames(AllCells2.int)))
+DimPlot(AllCells2.int, label = TRUE, cells.highlight = WhichCells(AllCells2.int, expression = `nCount_RNA` < 10000)) + labs(title = "AllCells2.int Cells", subtitle = "less than 10k UMIs")
+DimPlot(AllCells2.int, label = TRUE, cells.highlight = WhichCells(AllCells2.int, expression = `TMT` < 1)) + labs(title = "AllCells2.int Cells", subtitle = "no TMT UMI")
+
+FeaturePlot(AllCells2.int, features = c("nFeature_RNA", "nCount_RNA", "percent.eec", "percent.mito"))
+FeaturePlot(AllCells2.int, features = c("TMT", "Lct", "Chga", "Neurod1"), pt.size = 1)
+
+VlnPlot(AllCells2.int, features = c("nFeature_RNA", "nCount_RNA", "Neurod1", "percent.mito"), ncol = 2)
+VlnPlot(AllCells2.int, features = c("complexity", "TMT", "percent.eec", "Neurog3"), ncol=2)
+        
+FeaturePlot(AllCells2.int, features = Fig3[1:4])
+FeaturePlot(AllCells2.int, features = Fig3[5:8])
+FeaturePlot(AllCells2.int, features = Fig3[9:12])
+FeaturePlot(AllCells2.int, features = Fig3[13:16])
+FeaturePlot(AllCells2.int, features = c("Muc2", "Top2a" ), label =T)
+
+```
+Clusters to remove: 6,13,14
+Clusters to keep: 1,5,8,9,10,12
+```{r}
+FeaturePlot(AllCells2.int, features = lines[1:4])
+FeaturePlot(AllCells2.int, features = lines[5:8])
+FeaturePlot(AllCells2.int, features = lines[9:12])
+FeaturePlot(AllCells2.int, features = lines[13:16])
+FeaturePlot(AllCells2.int, features = lines[17:20])
+
+```
+```{r, fig.width=10, fig.height= 4.5}
+FeaturePlot(AllCells2.int, features = gob.genes[1:6], ncol = 3, label =T)
+FeaturePlot(AllCells2.int, features = c(pan.genes[1:5], "Defa17"), ncol = 3, label =T)
+FeaturePlot(AllCells2.int, features = c(ent.genes[c(1,2,7)], "Hmgb2", "Fabp2","Ace2"), ncol = 3, label =T)
+
+FeaturePlot(AllCells2.int, features = c("Lct", "Ace2", "Gda", "mt-Nd2", "Atf3", "Dclk1"), ncol = 3, label =T)
+
+FeaturePlot(AllCells2.int, features = eec.genes[1:6], ncol = 3, label =T)
+```
+
+```{r}
+FeaturePlot(AllCells2.int, features = "Saa1")
+```
+
+### Markers
+
+```{r}
+AllCells.markers <- FindAllMarkers(AllCells2.int, only.pos = T, assay = "RNA", slot = "scale.data")
+top9.AllCells.markers <- AllCells.markers %>% filter(pct.2 <.3 & pct.1 >.5) %>% group_by(cluster) %>% arrange(1/p_val_adj, .by_group = T) %>% top_n(n = 9, wt = 1/p_val_adj)
+top9.AllCells.markers
+```
+```{r}
+for (i in 1:25){
+  print(
+    FeaturePlot(AllCells2.int, features = top9.AllCells.markers$gene[(9*i-8):(9*i)])
+    )
+}
+  
+```
+```{r}
+for (i in 26:50){
+  print(
+    FeaturePlot(AllCells2.int, features = top9.AllCells.markers$gene[(9*i-8):(9*i)])
+    )
+}
+  
+```
+#### Heatmap
+```{r, fig.height = 18}
+#no_nts.rename <- RenameIdents(no_nts, 
+#                          '0' = '4_GABA', '3' = '5_GABA', '5' = '6_GABA', 
+#                          '1' = '0_GLUT', '2' = '1_GLUT', '4' = '2_GLUT', '6' = '3_GLUT')
+
+
+#no_nts.rename@active.ident <- factor(x = no_nts.rename@active.ident, levels = sort(levels(no_nts.rename))) 
+#no_nts.rename.markers <- FindAllMarkers(no_nts.rename, only.pos = T)
+
+#top10 <- no_nts.rename.markers %>% filter(pct.2 <.125) %>% group_by(cluster) %>% top_n(n = 10, wt = 1/p_val_adj) %>% arrange(pct.2, .by_group = T) 
+
+DoHeatmap(AllCells2.int, features = top9.AllCells.markers$gene, assay = "RNA", slot = "scale.data") + 
+    scale_fill_gradientn(colors = c("azure4", "ghostwhite", "purple")) + 
+    guides(color = FALSE)
+```
+
+
+## Round 3
+```{r, warning=F}
+ngn3.cells <- colnames(Ngn3T.round1)[colnames(Ngn3T.round1) %in% substr(WhichCells(AllCells2.int, idents = c(6, 14), invert = T),1,18)]
+nd1.cells <- colnames(Nd1T.round1)[colnames(Nd1T.round1) %in% substr(WhichCells(AllCells2.int, idents = c(6, 14), invert = T),1,18)]
+
+Ngn3T.round3 <- subset(Ngn3T.obj, cells = ngn3.cells)
+Nd1T.round3 <- subset(Nd1T.obj, cells = nd1.cells) 
+
+Ngn3T.round3 <- SCTransform(Ngn3T.round3, vars.to.regress = "percent.mito")
+Nd1T.round3 <- SCTransform(Nd1T.round3, vars.to.regress = "percent.mito")
+
+both.list <- list(Ngn3T.round3, Nd1T.round3)
+both.int.features <- SelectIntegrationFeatures(both.list, nfeatures = 3000)
+both.list <- PrepSCTIntegration(both.list, anchor.features = both.int.features)
+both.anchors <- FindIntegrationAnchors(both.list, normalization.method = "SCT", 
+    anchor.features = both.int.features)
+
+AllCells3.int <- IntegrateData(anchorset = both.anchors, normalization.method = "SCT")
+```
+
+
+```{r, warning=F}
+DefaultAssay(AllCells3.int) <- "integrated"
+
+AllCells3.int <- RunPCA(AllCells3.int, verbose = FALSE)
+AllCells3.int <- RunUMAP(AllCells3.int, dims = 1:30)
+AllCells3.int <- FindNeighbors(AllCells3.int, dims = 1:30, verbose = FALSE)
+
+resI = c(1, 0.8, .6, 0.5, 0.45, 0.42, 0.4, 0.35, 0.32, 0.3, 0.25, 0.1) 
+for (i in 1:12){
+  AllCells3.int <- FindClusters(AllCells3.int, verbose = FALSE, resolution = resI[i])
+  print(
+  DimPlot(AllCells3.int, label = TRUE) + labs(title = paste0("AllCells3.int Cells res = ", resI[i]), subtitle = length(colnames(AllCells3.int)))
+  )
+}
+```
+
+
+```{r, warning=F}
+DefaultAssay(AllCells3.int) <- "integrated"
+AllCells3.int <- FindClusters(AllCells3.int, verbose = FALSE, resolution = .3)
+DefaultAssay(AllCells3.int) <- "RNA"
+```
+```{r}
+DefaultAssay(AllCells3.int) <- "RNA"
+AllCells3.int <- NormalizeData(AllCells3.int)
+AllCells3.int <- ScaleData(AllCells3.int) #https://github.com/satijalab/seurat/issues/2023
+```
+```{r}
+DimPlot(AllCells3.int, label = TRUE) + labs(title = "AllCells3.int Cells", subtitle = length(colnames(AllCells3.int)))
+DimPlot(AllCells3.int, label = TRUE, group.by = "orig.ident") + labs(title = "AllCells3.int Cells", subtitle = length(colnames(AllCells3.int)))
+DimPlot(AllCells3.int, label = TRUE, cells.highlight = WhichCells(AllCells3.int, expression = `nCount_RNA` < 10000)) + labs(title = "AllCells3.int Cells", subtitle = "less than 10k UMIs")
+DimPlot(AllCells3.int, label = TRUE, cells.highlight = WhichCells(AllCells3.int, expression = `TMT` < 1)) + labs(title = "AllCells3.int Cells", subtitle = "no TMT UMI")
+
+FeaturePlot(AllCells3.int, features = c("nFeature_RNA", "nCount_RNA", "percent.eec", "percent.mito"))
+FeaturePlot(AllCells3.int, features = c("TMT", "Lct", "Chga", "Neurod1"), pt.size = 1)
+
+VlnPlot(AllCells3.int, features = c("nFeature_RNA", "nCount_RNA", "Neurod1", "percent.mito"), ncol = 2)
+VlnPlot(AllCells3.int, features = c("complexity", "TMT", "percent.eec", "Mki67"), ncol=2)
+
+FeaturePlot(AllCells3.int, features = Fig3[1:4])
+FeaturePlot(AllCells3.int, features = Fig3[5:8])
+FeaturePlot(AllCells3.int, features = Fig3[9:12])
+FeaturePlot(AllCells3.int, features = Fig3[13:16])#, slot = "counts", max.cutoff = 50)
+FeaturePlot(AllCells3.int, features = c("Muc2", "Saa1" ), label =T)
+
+```
+Clusters to remove: 4,5,7,9,14
+Clusters to keep: 1,7,8,9,10,13
+
+```{r}
+FeaturePlot(AllCells3.int, features = lines[1:4])
+FeaturePlot(AllCells3.int, features = lines[5:8])
+FeaturePlot(AllCells3.int, features = lines[9:12])
+FeaturePlot(AllCells3.int, features = lines[13:16])
+FeaturePlot(AllCells3.int, features = lines[17:20])
+```
+
+```{r, fig.width=10, fig.height= 4.5}
+FeaturePlot(AllCells3.int, features = gob.genes[1:6], ncol = 3, label =T)
+FeaturePlot(AllCells3.int, features = c(pan.genes[1:5], "Defa17"), ncol = 3, label =T)
+FeaturePlot(AllCells3.int, features = c(ent.genes[c(1,2,7)], "Hmgb2", "Fabp2","Ace2"), ncol = 3, label =T)
+
+FeaturePlot(AllCells3.int, features = c("Lct", "Ace2", "Gda", "mt-Nd2", "Atf3", "Dclk1"), ncol = 3, label =T)
+
+FeaturePlot(AllCells3.int, features = eec.genes[1:6], ncol = 3, label =T)
+```
+
+```{r, fig.width=14, fig.height=4.5}
+knight.markers <- c("Tac1", "Tph1", "Fev", "Reg4", "Sct", "Nts", "Cck", "Gcg", "Pyy", "Gip", "Ngn3", "Isl1", "Ghrl", "Sst", "Iapp", "Hmgb2", "Fabp2", "Guca2a", "Muc2", "Defa17", "Dclk1")
+
+DotPlot(AllCells2.int, features = knight.markers)
+```
+
+### Markers
+
+```{r}
+AllCells.markers <- FindAllMarkers(AllCells3.int, only.pos = T, assay = "RNA", slot = "scale.data")
+top9.AllCells.markers <- AllCells.markers %>% filter(pct.2 <.3 & pct.1 >.5) %>% group_by(cluster) %>% arrange(1/p_val_adj, .by_group = T) %>% top_n(n = 9, wt = 1/p_val_adj)
+top9.AllCells.markers
+```
+```{r}
+for (i in 1:25){
+  print(
+    FeaturePlot(AllCells3.int, features = top9.AllCells.markers$gene[(9*i-8):(9*i)])
+    )
+}
+  
+```
+```{r}
+for (i in 26:50){
+  print(
+    FeaturePlot(AllCells2.int, features = top9.AllCells.markers$gene[(9*i-8):(9*i)])
+    )
+}
+  
+```
+
+# EECs
+
+```{r, warning=F}
+#WhichCells(AllCells.int, idents = c(0,12,8,11,10,16))
+#WhichCells(AllCells2.int, idents = c(1,5,8,9,10,12))
+#WhichCells(AllCells3.int, idents = c(1,5,6,7,8,9,11))
+
+ngn3.eecells <- colnames(Ngn3T.obj)[colnames(Ngn3T.obj) %in% substr(WhichCells(AllCells3.int, idents = c(1,5,8,7,10,6)),1,18)]
+nd1.eecells <- colnames(Nd1T.obj)[colnames(Nd1T.obj) %in% substr(WhichCells(AllCells3.int, idents = c(1,5,8,7,10,6)),1,18)] #c(8,2,10,12,9,6,7) c(1,7,8,9,10,13)
+Ngn3T.round4 <- subset(Ngn3T.obj, cells = ngn3.eecells) 
+Ngn3T.round4 <- SCTransform(Ngn3T.round4, vars.to.regress = "percent.mito")
+Nd1T.round4 <- subset(Nd1T.obj, cells = nd1.eecells) 
+Nd1T.round4 <- SCTransform(Nd1T.round4, vars.to.regress = "percent.mito")
+
+both.list <- list(Ngn3T.round4, Nd1T.round4)
+both.int.features <- SelectIntegrationFeatures(both.list, nfeatures = 3000)
+both.list <- PrepSCTIntegration(both.list, anchor.features = both.int.features)
+both.anchors <- FindIntegrationAnchors(both.list, normalization.method = "SCT", 
+    anchor.features = both.int.features)
+
+EECells.int <- IntegrateData(anchorset = both.anchors, normalization.method = "SCT")
+
+DefaultAssay(EECells.int) <- "integrated"
+
+EECells.int <- RunPCA(EECells.int, verbose = FALSE)
+EECells.int <- RunUMAP(EECells.int, dims = 1:30)
+EECells.int <- FindNeighbors(EECells.int, dims = 1:30, verbose = FALSE)
+
+resI = c(1, .5, .45, .43, 0.41, .4, 0.3, .28, 0.25, 0.2, 0.15, 0.1) 
+for (i in 1:12){
+  EECells.int <- FindClusters(EECells.int, verbose = FALSE, resolution = resI[i])
+  print(
+  DimPlot(EECells.int, label = TRUE) + labs(title = paste0("EECells.int Cells res = ", resI[i]), subtitle = length(colnames(EECells.int)))
+  )
+}
+
+EECells.int <- FindClusters(EECells.int, verbose = FALSE, resolution = .3)
+
+DefaultAssay(EECells.int) <- "RNA"
+```
+```{r}
+
+DefaultAssay(EECells.int) <- "integrated"
+EECells.int <- FindClusters(EECells.int, verbose = FALSE, resolution = .41)
+DefaultAssay(EECells.int) <- "RNA"
+
+```
+```{r}
+EECells.int <- NormalizeData(EECells.int)
+EECells.int <- ScaleData(EECells.int) #https://github.com/satijalab/seurat/issues/2023
+```
+
+```{r}
+DimPlot(EECells.int, label = TRUE) + labs(title = "EECells.int Cells", subtitle = length(colnames(EECells.int)))
+DimPlot(EECells.int, label = TRUE, group.by = "orig.ident") + labs(title = "EECells.int Cells", subtitle = length(colnames(EECells.int)))
+DimPlot(EECells.int, label = TRUE, cells.highlight = WhichCells(EECells.int, expression = `nCount_RNA` < 10000)) + labs(title = "EECells.int Cells", subtitle = "less than 10k UMIs")
+DimPlot(EECells.int, label = TRUE, cells.highlight = WhichCells(EECells.int, expression = `nFeature_RNA` > 7500)) + labs(title = "EECells.int Cells", subtitle = "less than 10k UMIs")
+DimPlot(EECells.int, label = TRUE, cells.highlight = WhichCells(EECells.int, expression = `TMT` < 1)) + labs(title = "EECells.int Cells", subtitle = "no TMT UMI")
+
+FeaturePlot(EECells.int, features = c("nFeature_RNA", "nCount_RNA", "percent.eec", "percent.mito"))
+FeaturePlot(EECells.int, features = c("Muc2", "Lct", "Chga", "Neurod1"), pt.size = 1)
+
+VlnPlot(EECells.int, features = c("nFeature_RNA", "nCount_RNA", "Neurod1", "percent.mito"), ncol = 2)
+VlnPlot(EECells.int, features = c("complexity", "TMT", "percent.eec", "Mki67"), ncol=2)
+
+FeaturePlot(EECells.int, features = Fig3[1:4])
+FeaturePlot(EECells.int, features = Fig3[5:8])
+FeaturePlot(EECells.int, features = Fig3[9:12])
+FeaturePlot(EECells.int, features = Fig3[13:16])#, slot = "counts", max.cutoff = 50)
+FeaturePlot(EECells.int, features = c("Muc2", "Top2a" ), label =T)
+
+```
+Clusters to remove: 4,5,7,9,14
+Clusters to keep: 1,7,8,9,10,13
+```{r}
+FeaturePlot(EECells.int, features = lines[1:4])
+FeaturePlot(EECells.int, features = lines[5:8])
+FeaturePlot(EECells.int, features = lines[9:12])
+FeaturePlot(EECells.int, features = lines[13:16])
+FeaturePlot(EECells.int, features = lines[17:20])
+```
+
+```{r}
+FeaturePlot(EECells.int, features = "Tac1", label = T )
+```
+C(0,7,9,10,13)
+
+```{r, fig.width=10, fig.height= 4.5}
+FeaturePlot(EECells.int, features = gob.genes[1:6], ncol = 3, label =T)
+FeaturePlot(EECells.int, features = c(pan.genes[1:5], "Defa17"), ncol = 3, label =T)
+FeaturePlot(EECells.int, features = c(ent.genes[c(1,2,7)], "Hmgb2", "Fabp2","Ace2"), ncol = 3, label =T)
+
+FeaturePlot(EECells.int, features = c("Lct", "Ace2", "Gda", "Ghrl", "Atf3", "Dclk1"), ncol = 3, label =T)
+
+FeaturePlot(EECells.int, features = eec.genes[1:6], ncol = 3, label =T)
+```
+## EEC Markers
+```{r}
+EECells.markers <- FindAllMarkers(EECells.int, only.pos = T, assay = "RNA", slot = "scale.data")
+top9.EECells.markers <- EECells.markers %>% filter(pct.2 <.4) %>% group_by(cluster) %>% arrange(desc(pct.2), .by_group = T) %>% top_n(n = 9, wt = 1/p_val_adj)
+top9.EECells.markers
+```
+```{r, fig.height=}
+for (i in 1:11){
+  print(
+    FeaturePlot(EECells.int, features = top9.EECells.markers$gene[(9*i-8):(9*i)])
+    )
+}
+  
+```
+```{r}
+EECells.markers
+EECells.markers2 <- EECells.markers %>% filter(pct.2 <.3 & pct.1 > .5) %>% group_by(cluster) %>% arrange(pct.2, .by_group = T)
+
+FeaturePlot(EECells.int, feature = c("Gip", "Gcg", "Pyy", "Cck" ))
+FeaturePlot(EECells.int, feature = c("Sst", "Ghrl", "Gcg", "Nts" ))
+FeaturePlot(EECells.int, feature = c("Cck", "Gast", "Map2", "Sct" ))
+FeaturePlot(EECells.int, feature = c("Top2a", "Tac1", "Tph1", "Nts" ))
+
+FeaturePlot(EECells.int, feature = c("Prac1", "Rxfp4", "Pax4", "Fev" ))
+FeaturePlot(EECells.int, feature = c("Rb1" ))
+VlnPlot(EECells.int, feature = c("Rb1" ))
+RidgePlot(EECells.int, feature = c("Rb3" ), idents = c(0,5,6,1,8))
+
+
+FeaturePlot(AllCells3.int, feature = c("Sry", "Xist"))
+```
+```{r}
+DEG_6v0 <- FindMarkers(EECells.int, slot = "scale.data", assay = "RNA", ident.1 = 0, ident.2 = 6)
+DEG_6v0
+FeaturePlot(EECells.int, features = rownames(DEG_6v0)[1:9])
+
+```
+
+## Renaming Clusters
+
+https://en.wikipedia.org/wiki/Enteroendocrine_cell
+3 = K_cell
+GIP
+
+4 = L_cell
+PYY, Gcg
+L cells secrete glucagon-like peptide-1, an incretin, peptide YY3-36, oxyntomodulin and 
+
+2 = I_cell
+CCK
+
+
+Enterochromaffin-like cell
+Enterochromaffin-like cells or ECL cells are a type of neuroendocrine cell secreting histamine.
+
+9 = N_cell
+Nts
+
+7 = D_cell
+Sst
+
+10 = X_cell
+Ghrl
+
+1 = Progenitors
+8 = "Early_EC"
+0 = EC_1
+5 = EC_late
+6 = EC_exiting
+Tph1
+
+
+```{r, fig.height = 15, fig.width=12}
+eec.rename <- RenameIdents(EECells.int, 
+                          '10' = 'X Cells', '7' = 'D Cells', '9' = 'N Cells', '4' = 'L Cells', '2' = 'I Cells', '3' = 'K Cells',
+                          '1' = 'Progenitor', '8' = 'Early_EC',
+                          '6' = 'EC_1', '0' = 'EC_2', '5' = 'EC_3')
+
+
+#eec.rename@active.ident <- factor(x = eec.rename@active.ident, levels = sort(levels(eec.rename))) 
+eec.rename.markers <- FindAllMarkers(eec.rename, only.pos = T, assay = "RNA", slot = "scale.data")
+
+top10 <- eec.rename.markers %>% filter(pct.2 <.3 & pct.1 > .4) %>% group_by(cluster) %>% top_n(n = 10, wt = 1/p_val_adj) %>% arrange(pct.2, .by_group = T) 
+
+DoHeatmap(eec.rename, features = top10$gene, assay = "RNA", slot = "scale.data") +#, disp.min = -2, disp.max = 2) + 
+    scale_fill_gradientn(colors = c("azure4", "ghostwhite", "purple"))
+
+DoHeatmap(EECells.int, features = top9.EECells.markers$gene, assay = "RNA", slot = "scale.data") + 
+    scale_fill_gradientn(colors = c("azure4", "ghostwhite", "purple")) + 
+    guides(color = FALSE)
+```
+```{r}
+DimPlot(eec.rename, label =T) + labs(title = "Enteroendocrine Cells")
+DimPlot(eec.rename, group.by = "orig.ident", label =T) + labs(title = "Enteroendocrine Cells by Cre Origin")
+```
+```{r}
+eec.rename <- BuildClusterTree(eec.rename, dims = 1:30)
+PlotClusterTree(eec.rename)
+```
+
+```{r, fig.height = 15, fig.width=12}
+all.rename <- RenameIdents(AllCells3.int, 
+                          '0' = 'Progenitor', '3' = 'Enterocyte', '4' = 'Goblet', '11' = 'Goblet',
+                          '9' = 'Tuft', '2' = 'Paneth',
+                          '5' = 'Enteroendocrine', '6' = 'Enteroendocrine', '7' = 'Enteroendocrine', '10' = 'Enteroendocrine', 
+                          '8' = 'Enterochromaffin', '1' = 'Enterochromaffin')
+
+all.rename.markers <- FindAllMarkers(all.rename, only.pos = T, assay = "RNA", slot = "scale.data")
+
+top10 <- all.rename.markers %>% filter(pct.2 <.3 & pct.1 > .4) %>% group_by(cluster) %>% top_n(n = 10, wt = 1/p_val_adj) %>% arrange(pct.2, .by_group = T) 
+
+DoHeatmap(all.rename, features = top10$gene, assay = "RNA", slot = "scale.data") +#, disp.min = -2, disp.max = 2) + 
+    scale_fill_gradientn(colors = c("azure4", "ghostwhite", "purple"))
+
+DoHeatmap(AllCells3.int, features = top9.AllCells.markers$gene, assay = "RNA", slot = "scale.data") + 
+    scale_fill_gradientn(colors = c("azure4", "ghostwhite", "purple")) + 
+    guides(color = FALSE)
+```
+```{r}
+DimPlot(AllCells3.int, label =T) + labs(title ="All Cells") + labs(title ="All Cells")
+DimPlot(all.rename, label =T) + labs(title ="All Cells") + labs(title ="All Cells")
+DimPlot(all.rename, label =T, group.by = "orig.ident") + labs(title ="All Cells split by Cre-line")
+```
+```{r}
+all.rename <- BuildClusterTree(all.rename, dims = 1:30)
+PlotClusterTree(all.rename)
+```
+```{r}
+AllCells3.int <- BuildClusterTree(AllCells3.int, dims = 1:30)
+PlotClusterTree(AllCells3.int) 
+```
+
+```{r, fig.width=10, fig.height=4.5}
+dot.genes.all <- c("Tph1", "Neurod1", "Sct", "Defa21", "Dclk1", "Muc2", "Ace2", "Mki67")
+
+knight.markers <- c("Tac1", "Tph1", "Neurod1", "Sct", "Nts", "Cck", "Gcg", "Pyy", "Gip", "Ngn3", "Isl1", "Ghrl", "Sst", "Iapp", "Hmgb2", "Ace2", "Saar1", "Muc2", "Dclk1", "Defa21")
+
+DotPlot(all.rename, features = dot.genes.all)+ labs(title = "All Cells")
+```
+
+```{r, fig.width=10, fig.height=4.5}
+dot.genes.eec <- c( "Tph1", "Tac1", "Mki67", "Gip", "Cck", "Pyy", "Gcg", "Nts", "Sst", "Ghrl")
+
+DotPlot(eec.rename, features = dot.genes.eec)+ labs(title = "Enteroendocrine Cells")
+```
+```{r}
+save(AllCells3.int, file = "AllCells_jk.Rdata")
+save(all.rename, file = "AllCells_named.Rdata")
+save(EECells.int, file = "EEC_jk.Rdata")
+save(eec.rename, file = "EEC_named.Rdata")
+save(AllCells.markers, file = "AllCells_jk_markers.Rdata")
+#save(all.rename.markers, file = "all_named_markers.Rdata")
+save(EECells.markers, file = "EECells_jk_markers.Rdata")
+save(eec.rename.markers, file = "eec_named_markers.Rdata")
+save(Ngn3T.obj, file = "Ngn3T_SrtObj.Rdata")
+save(Nd1T.obj, file = "Nd1T_SrtObj.Rdata")
+
+```
+
+
